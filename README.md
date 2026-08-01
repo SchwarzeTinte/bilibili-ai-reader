@@ -80,13 +80,14 @@ bash run.sh
 
 ## 完全本地运行 AI
 
-安装并启动 [Ollama](https://ollama.com/)，例如拉取：
+安装并启动 [Ollama](https://ollama.com/)。普通电脑推荐体积较小、响应较快的模型：
 
 ```powershell
-ollama pull qwen3:8b
+ollama pull qwen3:4b
 ```
 
 在应用左侧选择 `Ollama`。默认接口地址为 `http://localhost:11434/v1`。
+程序会自动读取本机已经安装的 Ollama 模型并显示为下拉菜单，不需要手动填写模型名称。
 
 使用 Gemini、DeepSeek 或 OpenAI 时，用于总结或问答的字幕文本会发送给对应服务。API Key 仅保存在当前 Streamlit 会话，不写入磁盘。
 

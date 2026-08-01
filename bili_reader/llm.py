@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
+
+import requests
 
 from .models import Segment, Transcript
 from .text import format_timestamp, transcript_as_text
@@ -16,7 +18,12 @@ class LLMSettings:
     base_url: str = ""
 
 
-def _generate(settings: LLMSettings, system: str, prompt: str) -> str:
+def _generate(
+    settings: LLMSettings,
+    system: str,
+    prompt: str,
+    max_tokens: int = 1_200,
+) -> str:
     if settings.provider == "Gemini":
         if not settings.api_key:
             raise ValueError("请填写 Gemini API Key。")
@@ -32,12 +39,49 @@ def _generate(settings: LLMSettings, system: str, prompt: str) -> str:
             raise RuntimeError("Gemini 没有返回文本内容。")
         return text
 
+    if settings.provider == "Ollama":
+        host = (settings.base_url or "http://localhost:11434/v1").rstrip("/")
+        if host.endswith("/v1"):
+            host = host[:-3]
+        try:
+            response = requests.post(
+                f"{host}/api/chat",
+                json={
+                    "model": settings.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "think": False,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.2,
+                        "num_ctx": 8_192,
+                        "num_predict": max_tokens,
+                    },
+                },
+                timeout=300,
+            )
+            if response.status_code == 404:
+                raise ValueError(
+                    f"Ollama 中没有模型 `{settings.model}`。请从左侧选择已经安装的本机模型。"
+                )
+            response.raise_for_status()
+            content = str(response.json().get("message", {}).get("content", "")).strip()
+        except requests.Timeout as exc:
+            raise RuntimeError("Ollama 响应超时。请换用更小的模型，或稍后重试。") from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(f"无法连接 Ollama：{exc}") from exc
+        if not content:
+            raise RuntimeError("Ollama 没有返回文本内容。")
+        return content
+
     from openai import OpenAI
 
-    if settings.provider != "Ollama" and not settings.api_key:
+    if not settings.api_key:
         raise ValueError("请填写 API Key。")
     client = OpenAI(
-        api_key=settings.api_key or "ollama",
+        api_key=settings.api_key,
         base_url=settings.base_url or None,
         timeout=180,
     )
@@ -72,39 +116,60 @@ def _chunk_segments(segments: Iterable[Segment], max_chars: int = 12_000) -> lis
     return chunks
 
 
-def summarize(transcript: Transcript, settings: LLMSettings) -> str:
-    chunks = _chunk_segments(transcript.segments)
+def summarize(
+    transcript: Transcript,
+    settings: LLMSettings,
+    progress: Callable[[int, str], None] | None = None,
+) -> str:
+    chunk_size = 5_000 if settings.provider == "Ollama" else 12_000
+    chunks = _chunk_segments(transcript.segments, max_chars=chunk_size)
     system = (
         "你是一名严谨的视频内容分析助手。只能依据给定字幕作答，不要虚构画面或事实。"
         "使用简体中文，并用 [MM:SS] 或 [HH:MM:SS] 标注关键结论的依据。"
     )
     if len(chunks) == 1:
-        return _generate(
+        if progress:
+            progress(10, "正在生成视频摘要……")
+        result = _generate(
             settings,
             system,
             "请整理以下视频字幕，输出：\n"
             "1. 三至五句话的核心摘要\n2. 按时间排列的章节\n"
             "3. 关键观点或知识点\n4. 字幕中存在的不确定信息（如有）\n\n"
             f"视频标题：{transcript.title}\n\n字幕：\n{chunks[0]}",
+            max_tokens=700,
         )
+        if progress:
+            progress(100, "摘要生成完成。")
+        return result
 
     partials: list[str] = []
     for index, chunk in enumerate(chunks, start=1):
+        if progress:
+            percent = 5 + int(70 * (index - 1) / len(chunks))
+            progress(percent, f"正在整理字幕第 {index}/{len(chunks)} 段……")
         partials.append(
             _generate(
                 settings,
                 system,
                 f"这是视频字幕的第 {index}/{len(chunks)} 段。提炼本段要点，保留时间戳，"
                 f"不要下超出本段的信息。\n\n{chunk}",
+                max_tokens=220,
             )
         )
     combined = "\n\n".join(f"第 {i} 段摘要：\n{text}" for i, text in enumerate(partials, start=1))
-    return _generate(
+    if progress:
+        progress(80, "分段整理完成，正在合并最终摘要……")
+    result = _generate(
         settings,
         system,
         "请合并下面的分段摘要，删除重复内容，输出完整的核心摘要、章节和关键观点。"
         "保留准确时间戳。\n\n" + combined,
+        max_tokens=700,
     )
+    if progress:
+        progress(100, "摘要生成完成。")
+    return result
 
 
 def _question_terms(question: str) -> set[str]:
@@ -136,7 +201,8 @@ def answer_question(
     settings: LLMSettings,
     history: list[dict[str, str]] | None = None,
 ) -> str:
-    context = _relevant_context(transcript, question)
+    context_limit = 5_000 if settings.provider == "Ollama" else 48_000
+    context = _relevant_context(transcript, question, max_chars=context_limit)
     recent_history = (history or [])[-4:]
     history_text = "\n".join(
         f"用户：{item.get('question', '')}\n助手：{item.get('answer', '')}" for item in recent_history
@@ -150,4 +216,4 @@ def answer_question(
     if history_text:
         prompt += f"\n最近对话：\n{history_text}\n"
     prompt += f"\n问题：{question}\n\n相关字幕：\n{context}"
-    return _generate(settings, system, prompt)
+    return _generate(settings, system, prompt, max_tokens=700)

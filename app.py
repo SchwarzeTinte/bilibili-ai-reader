@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import requests
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -38,6 +39,43 @@ def initialize_state() -> None:
             st.session_state[key] = value
 
 
+@st.cache_data(ttl=10, show_spinner=False)
+def ollama_models(base_url: str) -> list[str]:
+    host = base_url.rstrip("/")
+    if host.endswith("/v1"):
+        host = host[:-3]
+    try:
+        response = requests.get(f"{host}/api/tags", timeout=3)
+        response.raise_for_status()
+        entries = [
+            item
+            for item in response.json().get("models", [])
+            if isinstance(item, dict) and item.get("name")
+        ]
+
+        def model_rank(item: dict[str, object]) -> tuple[int, int, int, str]:
+            name = str(item["name"])
+            special_penalty = 2 if "ornith" in name.lower() else int("abliterated" in name.lower())
+            return (
+                0 if name.startswith(("qwen3:4b", "qwen3.5:4b")) else 1,
+                special_penalty,
+                1 if name.startswith("hf.co/") else 0,
+                name.lower(),
+            )
+
+        models: list[str] = []
+        seen_digests: set[str] = set()
+        for item in sorted(entries, key=model_rank):
+            digest = str(item.get("digest") or item.get("model") or item["name"])
+            if digest in seen_digests:
+                continue
+            seen_digests.add(digest)
+            models.append(str(item["name"]))
+        return models
+    except (requests.RequestException, ValueError, TypeError):
+        return []
+
+
 def llm_settings_panel() -> LLMSettings:
     st.sidebar.subheader("AI 设置")
     provider = st.sidebar.selectbox("模型服务", ["Gemini", "DeepSeek", "OpenAI", "Ollama"])
@@ -48,12 +86,23 @@ def llm_settings_panel() -> LLMSettings:
         "Ollama": ("qwen3:8b", "http://localhost:11434/v1"),
     }
     default_model, default_url = defaults[provider]
-    model = st.sidebar.text_input("模型名称", value=default_model, key=f"model_{provider}")
     if provider == "Ollama":
         api_key = ""
         base_url = st.sidebar.text_input("接口地址", value=default_url)
-        st.sidebar.caption("Ollama 完全在本机运行，无需 API Key。")
+        installed_models = ollama_models(base_url)
+        if installed_models:
+            model = st.sidebar.selectbox("本机模型", installed_models, key="ollama_installed_model")
+            st.sidebar.caption(f"已连接 Ollama，检测到 {len(installed_models)} 个本机模型，无需 API Key。")
+            if any(marker in model.lower() for marker in ("abliterated", "ornith")):
+                st.sidebar.warning(
+                    "当前模型偏推理/编程，长视频摘要可能很慢。推荐在 PowerShell 执行 "
+                    "`ollama pull qwen3:4b`，完成后刷新并选择 qwen3:4b。"
+                )
+        else:
+            model = st.sidebar.text_input("模型名称", value=default_model, key="model_Ollama")
+            st.sidebar.warning("没有连接到 Ollama，或尚未下载任何模型。请先启动 Ollama 并执行 `ollama pull 模型名`。")
     else:
+        model = st.sidebar.text_input("模型名称", value=default_model, key=f"model_{provider}")
         api_key = st.sidebar.text_input("API Key（仅保存在当前会话）", type="password")
         base_url = "" if provider == "Gemini" else st.sidebar.text_input("接口地址", value=default_url)
     return LLMSettings(provider=provider, model=model.strip(), api_key=api_key.strip(), base_url=base_url.strip())
@@ -79,9 +128,13 @@ def show_transcript(transcript: Transcript, settings: LLMSettings) -> None:
     summary_tab, chat_tab = st.tabs(["内容总结", "视频问答"])
     with summary_tab:
         if st.button("生成总结", type="primary", use_container_width=True):
+            summary_progress = st.progress(0, text="正在准备字幕……")
             try:
-                with st.spinner("AI 正在整理字幕……"):
-                    st.session_state.summary = summarize(transcript, settings)
+                st.session_state.summary = summarize(
+                    transcript,
+                    settings,
+                    progress=lambda percent, message: summary_progress.progress(percent, text=message),
+                )
             except Exception as exc:
                 st.error(f"总结失败：{exc}")
         if st.session_state.summary:
