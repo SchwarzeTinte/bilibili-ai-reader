@@ -61,6 +61,7 @@ def transcribe_audio(
     title: str,
     model_size: str = "small",
     language: str | None = "zh",
+    device_mode: str = "cpu",
     progress: ProgressCallback | None = None,
 ) -> Transcript:
     try:
@@ -70,22 +71,7 @@ def transcribe_audio(
 
     if progress:
         progress(5, f"正在加载 Whisper {model_size} 模型，首次运行会自动下载模型……")
-    try:
-        segments, info = _run_whisper(
-            WhisperModel,
-            audio_path,
-            model_size,
-            language,
-            device="auto",
-            compute_type="default",
-            progress=progress,
-        )
-    except (RuntimeError, OSError) as exc:
-        if not _is_cuda_runtime_error(exc):
-            raise
-        gc.collect()
-        if progress:
-            progress(10, "检测到 CUDA 运行库不完整，已自动切换到 CPU int8 模式……")
+    if device_mode == "cpu":
         segments, info = _run_whisper(
             WhisperModel,
             audio_path,
@@ -95,6 +81,32 @@ def transcribe_audio(
             compute_type="int8",
             progress=progress,
         )
+    else:
+        try:
+            segments, info = _run_whisper(
+                WhisperModel,
+                audio_path,
+                model_size,
+                language,
+                device="auto",
+                compute_type="default",
+                progress=progress,
+            )
+        except (RuntimeError, OSError) as exc:
+            if not _is_cuda_runtime_error(exc):
+                raise
+            gc.collect()
+            if progress:
+                progress(10, "检测到 CUDA 运行库不完整，已自动切换到 CPU int8 模式……")
+            segments, info = _run_whisper(
+                WhisperModel,
+                audio_path,
+                model_size,
+                language,
+                device="cpu",
+                compute_type="int8",
+                progress=progress,
+            )
     if not segments:
         raise RuntimeError("Whisper 没有从音频中识别出文字。")
     if progress:

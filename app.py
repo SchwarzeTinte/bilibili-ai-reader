@@ -136,6 +136,11 @@ with st.sidebar:
         index=2,
         help="模型越大越准确，也越慢。普通电脑建议 small。",
     )
+    whisper_device = st.selectbox(
+        "Whisper 运行设备",
+        ["CPU（推荐）", "自动检测 GPU"],
+        help="CPU 兼容性最好；只有完整安装 NVIDIA CUDA 运行库时才建议自动检测 GPU。",
+    )
     whisper_language = st.selectbox("语音语言", ["中文", "自动检测", "英文"])
     st.info(
         "Cookie 只由 yt-dlp 用于向 B站发起请求，不会发送给 AI 服务，也不会由本程序保存。"
@@ -215,6 +220,7 @@ if parts:
                     title=part["title"],
                     model_size=whisper_model,
                     language=language_map[whisper_language],
+                    device_mode="cpu" if whisper_device == "CPU（推荐）" else "auto",
                     progress=update_progress,
                 )
                 save_transcript(transcript)

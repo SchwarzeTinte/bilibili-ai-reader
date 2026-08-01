@@ -8,7 +8,7 @@
 - 优先读取人工字幕或 B站 AI 字幕
 - 无字幕时下载音频，使用 `faster-whisper` 本地转写
 - B站 CDN 不稳定时自动分块续传并回退到低码率音频
-- CUDA 运行库不完整时自动切换到 CPU `int8`，无需安装 CUDA
+- 默认使用兼容性更好的 CPU `int8`；选择 GPU 后若 CUDA 不完整，也会自动回退 CPU
 - 支持 Gemini、DeepSeek、OpenAI 和本地 Ollama
 - 生成摘要、章节、知识点和带时间戳的视频问答
 - 音频、字幕和转写结果仅保存在本机 `data` 目录
@@ -95,7 +95,7 @@ ollama pull qwen3:8b
 - 安装 Python 依赖可能需要几分钟。
 - Whisper 模型首次使用时会下载到 Hugging Face 本机缓存。
 - `small` 模型适合大多数普通电脑；内存不足时选择 `base` 或 `tiny`。
-- 没有完整 CUDA 环境也可以运行，程序会自动使用 CPU；15分钟视频可能需要数分钟。
+- 默认使用 CPU，不需要 CUDA；15分钟视频可能需要数分钟。只有完整安装 NVIDIA CUDA 环境时才建议选择“自动检测 GPU”。
 
 ## 常见问题
 
