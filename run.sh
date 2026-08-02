@@ -20,7 +20,7 @@ if [[ ! -x ".venv/bin/python" ]]; then
   .venv/bin/python -m pip install --upgrade pip
 fi
 
-if ! .venv/bin/python -c 'import streamlit, yt_dlp, faster_whisper, openai, google.genai' >/dev/null 2>&1; then
+if ! .venv/bin/python -c 'import streamlit, yt_dlp, faster_whisper, openai, google.genai, anthropic' >/dev/null 2>&1; then
   echo "Installing project dependencies..."
   .venv/bin/python -m pip install -r requirements.txt
 fi

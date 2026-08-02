@@ -127,6 +127,25 @@ def _subtitle_tracks(info: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(unique.values(), key=score)
 
 
+def _has_audio_stream(info: dict[str, Any]) -> bool | None:
+    """Infer audio availability from yt-dlp metadata without downloading media."""
+    codecs: list[str] = []
+    if info.get("acodec") is not None:
+        codecs.append(str(info.get("acodec", "")).lower())
+    formats = info.get("formats")
+    if isinstance(formats, list):
+        codecs.extend(
+            str(item.get("acodec", "")).lower()
+            for item in formats
+            if isinstance(item, dict) and item.get("acodec") is not None
+        )
+    if any(codec and codec not in {"none", "null"} for codec in codecs):
+        return True
+    if codecs and all(codec in {"", "none", "null"} for codec in codecs):
+        return False
+    return None
+
+
 def inspect_video(url: str, auth_source: str | None = None) -> list[dict[str, Any]]:
     if "bilibili.com" not in urlparse(url).netloc.lower() and not BVID_RE.search(url):
         raise BilibiliReaderError("请输入有效的哔哩哔哩视频链接或 BV 号。")
@@ -156,6 +175,7 @@ def inspect_video(url: str, auth_source: str | None = None) -> list[dict[str, An
                 "webpage_url": _download_url(url, int(entry.get("playlist_index") or index)),
                 "thumbnail": thumbnail,
                 "tracks": _subtitle_tracks(entry),
+                "has_audio": _has_audio_stream(entry),
                 "http_headers": entry.get("http_headers") or {"Referer": "https://www.bilibili.com/"},
             }
         )
@@ -288,3 +308,51 @@ def download_audio(part: dict[str, Any], auth_source: str | None = None) -> Path
 
     detail = errors[-1] if errors else "未知下载错误"
     raise BilibiliReaderError(f"音频下载失败（已尝试分块续传和低码率回退）：{detail}")
+
+
+def download_video(part: dict[str, Any], auth_source: str | None = None) -> Path:
+    """Download a moderate-resolution copy for local frame sampling."""
+    target_dir = video_directory(part["id"])
+    base_name = safe_name(part["id"]) + "-video"
+    cached = sorted(
+        (
+            path
+            for path in target_dir.glob(f"{base_name}.*")
+            if path.is_file() and not path.name.endswith((".part", ".ytdl"))
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if cached:
+        return cached[0]
+
+    output_template = str(target_dir / f"{base_name}.%(ext)s")
+    options = {
+        **_base_options(auth_source),
+        "format": "bestvideo[height<=720]/best[height<=720]/bestvideo/best",
+        "noplaylist": True,
+        "outtmpl": output_template,
+        "http_chunk_size": 1024 * 1024,
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 3,
+        "continuedl": True,
+    }
+    try:
+        with YoutubeDL(options) as ydl:
+            ydl.download([part["webpage_url"]])
+    except DownloadError as exc:
+        raise BilibiliReaderError(f"下载画面分析所需的视频失败：{exc}") from exc
+
+    candidates = sorted(
+        (
+            path
+            for path in target_dir.glob(f"{base_name}.*")
+            if path.is_file() and not path.name.endswith((".part", ".ytdl"))
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise BilibiliReaderError("视频下载完成，但没有找到可供抽帧的文件。")
+    return candidates[0]
