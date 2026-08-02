@@ -1,5 +1,7 @@
 # Bilibili AI Reader
 
+**English** | [中文](README.zh-CN.md) | [Deutsch](README.de.md)
+
 A local-first Streamlit application that reads Bilibili videos through subtitles,
 speech transcription, and optional visual frame analysis, then creates detailed
 notes and supports grounded video Q&A.
