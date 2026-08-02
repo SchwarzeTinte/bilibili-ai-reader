@@ -31,6 +31,7 @@ from bili_reader.llm import (  # noqa: E402
     vision_support_status,
 )
 from bili_reader.jobs import get_job_manager  # noqa: E402
+from bili_reader.lifecycle import render_browser_heartbeat, start_browser_close_monitor  # noqa: E402
 from bili_reader.models import Transcript  # noqa: E402
 from bili_reader.pipeline import SmartReadResult, smart_read_video  # noqa: E402
 from bili_reader.storage import (  # noqa: E402
@@ -57,6 +58,7 @@ from bili_reader.visual import (  # noqa: E402
 
 
 st.set_page_config(page_title="B站视频 AI 阅读器", page_icon="📺", layout="wide")
+render_browser_heartbeat(start_browser_close_monitor())
 
 
 def workspace_from_url() -> str:
