@@ -18,6 +18,68 @@ function Stop-WithHelp([string]$Message) {
     exit 1
 }
 
+function Get-ProjectStreamlitProcesses {
+    $AppScript = Join-Path $ProjectDir "app.py"
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -match '^python(?:w)?\.exe$' -and
+                $_.CommandLine -and
+                $_.CommandLine.IndexOf('streamlit run', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $_.CommandLine.IndexOf($AppScript, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            }
+    )
+}
+
+function Get-ListeningProjectPort($Processes) {
+    $ProcessIds = @($Processes | Select-Object -ExpandProperty ProcessId)
+    if (-not $ProcessIds) {
+        return $null
+    }
+    $Listeners = @(
+        Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.OwningProcess -in $ProcessIds } |
+            Sort-Object @{ Expression = { if ($_.LocalPort -eq 8501) { 0 } else { 1 } } }, LocalPort
+    )
+    if ($Listeners) {
+        return $Listeners[0].LocalPort
+    }
+    return $null
+}
+
+$ExistingProcesses = if ($CheckOnly) { @() } else { Get-ProjectStreamlitProcesses }
+if ($ExistingProcesses) {
+    $ExistingPort = Get-ListeningProjectPort $ExistingProcesses
+    if (-not $ExistingPort) {
+        # A concurrently launched instance may need a moment before it starts listening.
+        for ($Attempt = 0; $Attempt -lt 10 -and -not $ExistingPort; $Attempt++) {
+            Start-Sleep -Milliseconds 500
+            $ExistingProcesses = Get-ProjectStreamlitProcesses
+            $ExistingPort = Get-ListeningProjectPort $ExistingProcesses
+        }
+    }
+    if ($ExistingPort) {
+        $ExistingUrl = "http://localhost:$ExistingPort"
+        Write-Host "Bilibili AI Reader is already running at $ExistingUrl" -ForegroundColor Green
+        Start-Process $ExistingUrl
+        exit 0
+    }
+
+    $Cutoff = (Get-Date).AddSeconds(-30)
+    $OrphanIds = @(
+        $ExistingProcesses |
+            Where-Object { $_.CreationDate -lt $Cutoff } |
+            Select-Object -ExpandProperty ProcessId
+    )
+    if ($OrphanIds) {
+        Write-Host "Cleaning up an old Bilibili AI Reader process that no longer owns a port..." -ForegroundColor Yellow
+        Stop-Process -Id $OrphanIds -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "Another Bilibili AI Reader instance is still starting. Please wait a moment." -ForegroundColor Yellow
+        exit 0
+    }
+}
+
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Stop-WithHelp "FFmpeg is missing. Install it with: winget install --id Gyan.FFmpeg"
 }
@@ -49,7 +111,7 @@ $InstalledHash = if (Test-Path -LiteralPath $RequirementsMarker) {
     ""
 }
 
-& $PythonExe -c 'import streamlit, yt_dlp, faster_whisper, openai, google.genai' 2>$null
+& $PythonExe -c 'import streamlit, yt_dlp, faster_whisper, openai, anthropic, google.genai' 2>$null
 $ImportsOk = $LASTEXITCODE -eq 0
 if ((-not $ImportsOk) -or ($InstalledHash -ne $RequirementsHash)) {
     Write-Host "Installing or updating project dependencies..."
