@@ -1,236 +1,299 @@
-# B站视频 AI 阅读器
+# Bilibili AI Reader
 
-一个在本机运行的 Bilibili 字幕提取、语音转写和 AI 问答工具。
+A local-first Streamlit application that reads Bilibili videos through subtitles,
+speech transcription, and optional visual frame analysis, then creates detailed
+notes and supports grounded video Q&A.
 
-## 功能
+## Highlights
 
-- 输入 B站链接或 BV 号并选择分P
-- 优先读取人工字幕或 B站 AI 字幕
-- 无字幕时下载音频，使用 `faster-whisper` 本地转写
-- 自动按“字幕 → 音轨 Whisper → 视频画面”的顺序回退，不要求用户预先判断媒体类型
-- 默认提供“一键智能读取”，手动字幕、强制转写和单独画面分析收在高级选项中
-- 无字幕且无可用语音时可下载视频、自适应定时抽帧，并用支持图片输入的多模态模型整理画面时间线
-- B站 CDN 不稳定时自动分块续传并回退到低码率音频
-- 默认使用兼容性更好的 CPU `int8`；选择 GPU 后若 CUDA 不完整，也会自动回退 CPU
-- 支持 Gemini、DeepSeek、OpenAI、Anthropic（Claude）和本地 Ollama
-- 支持 OpenAI Chat Completions 兼容服务，可连接 LM Studio、LocalAI、llama.cpp、vLLM 及多数 API 聚合平台
-- 生成覆盖完整时间线、论证过程、例子和细节的详细视频笔记，以及带时间戳的视频问答
-- AI 运行时显示字幕检索、分段分析和结果整理等可验证处理步骤
-- 后台任务实时显示排队/运行计时和粗略预计时长；较长任务会在启动时预告，完成、失败和终止记录会保留实际耗时
-- 视频问答提交后会在对话内立即保留用户问题，并持续显示当前处理步骤、进度和已用时间
-- 视频信息检测、字幕下载、音频转写和画面分析同样在后台运行；页面操作不会中断任务
-- 摘要和问答按模型上下文动态分配输出长度；模型因长度上限中断时持续自动续写，直到正常结束
-- 长视频笔记按文本量和时间范围分段生成，每段结果原样保留；综合分析不会再覆盖或压缩掉中间时间线
-- 某一段自动续写发生重复时只拆分重做该段，多次失败则保留对应字幕作为内容覆盖保底
-- 每次总结和问答自动保存到本机内容历史；支持重新打开、归档、取消归档和确认删除
-- ChatGPT 风格侧栏以短标题显示内容历史；每条记录可单独归档或删除，并支持多选批量管理
-- 删除采用15天本地回收站：聊天/总结与对应字幕、音频一起备份，每条记录显示独立恢复倒计时
-- 模型、API、B站登录和 Whisper 设置集中在浮层设置页
-- 侧栏“新建对话”只清空当前工作区，不覆盖历史，也不删除已下载内容
-- 保存后的模型、上下文、B站访问和 Whisper 参数会在下次启动时自动恢复
-- AI总结和问答在独立后台任务中运行；切换历史、新建对话或打开设置不会中断生成
-- 支持多个对话分别使用不同模型同时生成；并发运行多个本地模型任务时会提示显存、内存和速度风险
-- 正在运行的对话会锁定任务启动时的模型；如需为该对话切换模型，须先在设置中终止其后台任务
-- 运行中的对话保留在侧栏，并以持续旋转的红色圆形进度标记显示状态；可随时切走、返回或新建其他对话
-- “终止本对话全部任务”会一次终止该对话的所有读取和模型任务；释放中的任务单独统计，不再算作仍在运行或触发并发过载提示
-- 后台任务使用守护工作线程：页面刷新不影响任务，但应用服务器真正退出时不会遗留占用显存的孤儿 Python 进程
-- Windows 启动脚本会复用已经运行的本项目实例，并清理确认不再监听端口的旧孤儿实例，避免重复启动多个任务管理器
-- 当前对话带有可恢复的页面标识；浏览器刷新或重新打开当前地址后，会自动回到原来的运行中对话和进度
-- 已完全终止的任务会显示在侧栏，可单独删除其任务记录
-- 生成前检查模型、API Key、接口地址和 Ollama 模型；配置错误会说明原因并直接打开对应设置页
-- 音频、字幕和转写结果仅保存在本机 `data` 目录
+- Accepts a Bilibili URL or BV ID, including multi-part videos.
+- Uses an automatic fallback pipeline: existing subtitles, then local Whisper
+  transcription, then visual frame analysis when usable text is still insufficient.
+- Evaluates both text density and timeline coverage instead of accepting a few
+  isolated subtitle lines as complete content.
+- Uses adaptive frame sampling for silent or visually driven videos, with a maximum
+  of 180 representative frames for long videos.
+- Supports Gemini, OpenAI, DeepSeek, Anthropic Claude, Ollama, and custom
+  OpenAI-compatible services such as LM Studio, LocalAI, llama.cpp, and vLLM.
+- Detects installed Ollama models and, where available, model context and vision
+  capabilities.
+- Generates detailed timeline-oriented video notes and timestamped answers.
+- Automatically continues generation when a model explicitly stops at its output
+  length limit, while detecting repeated continuations to prevent infinite loops.
+- Runs video inspection, downloads, transcription, visual analysis, summaries, and
+  Q&A as background tasks.
+- Keeps background work alive across Streamlit reruns, page refreshes, settings
+  changes, history navigation, and new conversations.
+- Shows task progress, elapsed time, rough duration estimates, and overload warnings
+  for concurrent local-model jobs.
+- Stores Q&A inside its video conversation and supports editing an earlier question
+  as a new branch without destroying the previous branch.
+- Provides a ChatGPT-style history sidebar with archive, multi-select management,
+  and a 15-day recoverable trash system.
+- Saves settings locally and restores them on the next launch.
+- Automatically exits the local server after the final application tab is closed.
 
-## 环境要求
+## Requirements
 
-- Windows 10/11、macOS 或常见 Linux 发行版
-- Python 3.10 或更高版本，推荐 Python 3.11+
+- Windows 10/11, macOS, or a common Linux distribution
+- Python 3.10 or newer; Python 3.11+ is recommended
 - FFmpeg
-- 首次安装依赖及下载 Whisper 模型时需要联网
+- Internet access for initial dependency installation, Bilibili access, cloud APIs,
+  and first-time Whisper model downloads
 
-Windows 安装 FFmpeg：
+Install FFmpeg on Windows with:
 
 ```powershell
 winget install --id Gyan.FFmpeg
 ```
 
-安装后需要重新打开终端，确保以下命令可以运行：
+Open a new terminal afterward and verify:
 
 ```powershell
 python --version
 ffmpeg -version
 ```
 
-## 从 GitHub 安装
+## Installation
 
 ```powershell
 git clone https://github.com/SchwarzeTinte/bilibili-ai-reader.git
 cd bilibili-ai-reader
 ```
 
-### Windows（一键启动）
+### Windows
 
-双击项目中的 `run.bat`，或者在 PowerShell 中运行：
+Double-click `run.bat`, or run:
 
 ```powershell
 .\run.bat
 ```
 
-脚本会自动创建 `.venv`、安装或更新依赖、检查 FFmpeg，然后打开：
+The launcher creates `.venv`, installs or updates dependencies, verifies FFmpeg,
+reuses an already-running project instance, and opens:
 
 ```text
 http://localhost:8501
 ```
 
-只检查环境、不启动页面：
+To validate the environment without starting the app:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\run.ps1 -CheckOnly
 ```
 
-### macOS / Linux
+To stop the application and all of its background child processes immediately,
+double-click `stop.bat`, or run:
 
-先用系统包管理器安装 Python 和 FFmpeg，然后运行：
+```powershell
+.\stop.bat
+```
+
+Closing the final browser tab connected to this application also stops the server
+after an approximately six-second grace period. Refreshing the page, using Streamlit
+Rerun, or keeping another application tab open does not trigger shutdown.
+
+### macOS and Linux
+
+Install Python and FFmpeg through your system package manager, then run:
 
 ```bash
 bash run.sh
 ```
 
-## 使用方法
+## Basic workflow
 
-1. 输入 B站链接或 BV 号，点击“读取视频信息”。
-2. 点击“一键智能读取”。程序优先提取已有字幕，没有字幕才使用 Whisper，字幕和音频都不可用时才分析画面。
-3. 只有需要强制更换读取路线时，才展开“显示高级读取选项”。
-4. 点击页面标题右侧的“⚙ 设置”，在浮层中选择 AI 服务并配置本地读取选项。页面最右上角的 Streamlit 原生三点菜单仍保留 Rerun、Clear cache 和主题颜色等功能。使用云端模型需要自己的 API Key；本地服务通常不需要云端 Key。
-5. 在设置浮层中点击“测试 AI 连接”，确认当前 Key、接口地址和模型名称确实可用，然后保存并关闭。
+1. Enter a Bilibili video URL or BV ID and select a part if necessary.
+2. Click the smart-read action. The app first checks existing subtitles, then tries
+   Whisper when needed, and finally supplements sparse content with frame analysis.
+3. Open advanced reading options only when you need to force a specific route.
+4. Open **Settings** to select an AI provider, model, context budget, Bilibili access
+   method, and Whisper options.
+5. Use **Test AI connection** before starting a long summary or Q&A task.
+6. Generate detailed video notes or ask questions about the current video.
 
-“B站访问身份”不是在本程序中重新登录。普通公开视频选择“不使用登录信息”即可；只有视频要求登录时，才让 yt-dlp 读取本机浏览器登录信息或导出的 `cookies.txt`。它不能绕过会员、付费、地区、私密或平台权限限制。
+## Reading logic
 
-Whisper 只负责把说话声转换成文字：模型越大通常越准确也越慢；普通电脑建议 `small + CPU`。语音语言已知时直接选择更稳定，混合语言可使用自动检测。
+The standard completeness profile expects roughly 30 effective text units per
+minute. For videos longer than three minutes, usable text should also cover at least
+35% of the timeline. When either condition is not met, the app continues to audio or
+visual analysis rather than silently ignoring most of the video.
 
-若视频既无字幕也没有可识别语音，程序才会显示“读取视频画面”。抽帧数量按时长自动计算：15分钟视频约60帧，长视频最多180帧，并在开始前显示预计帧数、间隔和当前模型的视觉能力检测结果。仅文字模型会要求先更换模型。抽帧仍可能漏掉一闪而过的信息，云端视觉模型还会产生图片输入费用。
+The sensitivity setting provides three profiles:
 
-“一键智能读取”不会因为检测到少量字幕或少量 Whisper 文字就提前结束。程序同时检查有效文字密度和时间线覆盖率：标准档约为30个有效文字单位/分钟，且超过3分钟的视频需覆盖至少35%的时间线；不足时继续尝试音频或画面，并将文字与画面描述合并。设置中可选择“节省费用 / 标准（推荐） / 严格完整”。
-6. 生成详细视频笔记，或针对视频内容提问。每次生成结果都会出现在侧栏“内容历史”中。
+- **Save cost** reduces visual-model calls.
+- **Standard** balances cost and timeline coverage.
+- **Strict coverage** favors completeness and is more likely to use frame analysis.
 
-普通公开视频先将“B站登录状态”设为“不使用”。只有视频确实要求登录时，才读取浏览器 Cookie 或指定本机 `cookies.txt`。
+For visual fallback, sampling scales with duration. A 15-minute video uses about 60
+frames, while long videos are capped at 180 frames. Sampling can still miss a brief
+single-frame event, and cloud vision APIs may charge for each image input.
 
-## 支持的模型服务
+When visual analysis is used because effective text is unavailable, the interface
+shows an accuracy notice. Small or quantized local vision models can be less reliable
+than large cloud models; cloud accuracy depends on the exact API model. Always verify
+names, on-screen text, numbers, and critical events against the source video.
 
-| 左侧选项 | 适用服务 | 需要准备 |
+## Supported AI services
+
+| Setting | Service | Required configuration |
 | --- | --- | --- |
-| Gemini | Google Gemini API | Gemini API Key 和可用模型名 |
-| DeepSeek | DeepSeek API | DeepSeek API Key 和可用模型名 |
-| OpenAI | OpenAI API | OpenAI API Key 和可用模型名 |
-| Anthropic | Claude API | Anthropic API Key 和可用模型名 |
-| Ollama | 本机或局域网 Ollama | 启动 Ollama，并先安装至少一个模型 |
-| OpenAI 兼容（自定义） | LM Studio、LocalAI、llama.cpp、vLLM、兼容的云端服务 | 启动服务，填写 `/v1` 地址；云端服务通常还需要 Key |
+| Gemini | Google Gemini API | API key and available model ID |
+| OpenAI | OpenAI API | API key and available model ID |
+| DeepSeek | DeepSeek API | API key and available model ID |
+| Anthropic | Claude API | API key and available model ID |
+| Ollama | Local or LAN Ollama server | Running Ollama and at least one installed model |
+| Custom OpenAI-compatible | LM Studio, LocalAI, llama.cpp, vLLM, or compatible cloud endpoints | `/v1` endpoint, model ID, and a key when required |
 
-程序按接口协议工作，而不是按模型文件格式工作。单独放在磁盘上的 `.gguf`、`.safetensors` 等文件不能被网页直接识别；需要先用 Ollama、LM Studio、llama.cpp、vLLM 或其他推理服务加载该模型，并开放接口。
+The application connects to inference APIs; it does not directly load standalone
+`.gguf` or `.safetensors` files. Load those files through Ollama, LM Studio,
+llama.cpp, vLLM, or another inference server first.
 
-## 完全本地运行 AI：Ollama
+### Ollama
 
-安装并启动 [Ollama](https://ollama.com/)。普通电脑推荐体积较小、响应较快的模型：
+Install and start [Ollama](https://ollama.com/), then install a model, for example:
 
 ```powershell
 ollama pull qwen3:4b
 ```
 
-在应用左侧选择 `Ollama`。默认接口地址为 `http://localhost:11434/v1`。
-程序会自动读取本机已经安装的 Ollama 模型并显示为下拉菜单，不需要手动填写模型名称。
-因此，别人 clone 后，只要其电脑上的 Ollama 正在运行，程序就会识别该电脑通过 `ollama pull` 下载的模型；程序不会自动替对方下载模型。
+Use `http://localhost:11434/v1` as the default endpoint. The app reads the model list
+from that Ollama instance, so another user will see the models installed on their own
+computer rather than models from the original developer's machine.
 
-Ollama 的“上下文预算”是程序允许使用的上限，不是每次请求都强制分配的窗口。程序会根据本次字幕、问题和预期输出自动选择较小且足够的 `num_ctx`，并通过流式响应等待本地模型完成，避免慢速 CPU 推理被固定总时长误判为超时。真正使用 65,536 以上的长上下文仍会显著增加内存/显存占用；普通电脑建议从 8,192～32,768 开始。
-程序还会读取模型声明的最大上下文，根据当前字幕估算完整问答所需 tokens，并在侧栏提供上下文窗口设置和建议值。提高上下文能减少字幕筛选造成的信息遗漏，但也会增加内存或显存占用。
+The context budget is a maximum the app may use, not a window that is always fully
+allocated. Requests use the smallest sufficient Ollama context where possible.
+Very large contexts still consume substantially more RAM or VRAM and may make local
+inference appear unresponsive. Start around 8,192 to 32,768 tokens unless the task
+and hardware clearly require more.
 
-## 连接其他本地模型或兼容服务
+### Other local or compatible servers
 
-在左侧选择 `OpenAI 兼容（自定义）`，然后：
+Choose **Custom OpenAI-compatible**, then:
 
-1. 先在对应软件中加载模型并启动 API 服务。
-2. 填写 OpenAI 兼容地址，例如 LM Studio 常用 `http://localhost:1234/v1`，llama.cpp 常用 `http://localhost:8080/v1`；实际地址以该软件显示为准。
-3. 本地服务的 API Key 通常可以留空；云端兼容服务通常必须填写自己的 Key。
-4. 如果服务支持 `/models`，程序会自动列出模型；否则手动填写服务端显示的模型 ID。
-5. 按服务端实际配置填写“上下文预算”，再点击“测试 AI 连接”。
+1. Load the model and start its API server.
+2. Enter its `/v1` URL, such as `http://localhost:1234/v1` for a typical LM Studio
+   setup or `http://localhost:8080/v1` for a typical llama.cpp setup.
+3. Leave the key empty only when the local service permits unauthenticated access.
+4. Select a detected model or enter the exact model ID shown by the service.
+5. Set a context budget that does not exceed the server-side loaded context.
 
-不同兼容服务对 `temperature`、输出 token 参数和 system 消息的支持略有差异。程序会对常见差异自动回退；如果服务没有实现 Chat Completions 协议，则需要选用它的原生选项或在服务端开启 OpenAI 兼容接口。
+Compatible services differ in their support for `temperature`, output-token fields,
+system messages, and thinking controls. The app retries common parameter variations,
+but the endpoint must still implement the Chat Completions protocol used here.
 
-使用 Gemini、DeepSeek、OpenAI、Anthropic 或自定义云端接口时，用于总结或问答的字幕文本会发送给对应服务；使用画面读取时，抽取的截图也会发送给该服务。启用“在这台电脑上保存 API Key”后，Key 会写入被 Git 忽略的 `data/settings.json`，仅适合个人电脑；共享电脑请关闭并妥善删除该文件。
-各家云端服务的 API 账户、额度与网页或客户端会员相互独立；例如 ChatGPT Plus 不能直接代替 OpenAI API Key 和 API 额度。
+## Bilibili access identity
 
-## 首次运行说明
+Most public videos should use **No login information**. Browser cookies or a local
+Netscape-format `cookies.txt` file are only needed when Bilibili requires an already
+authorized session. This feature cannot bypass membership, payment, region, private,
+or platform access restrictions.
 
-- 安装 Python 依赖可能需要几分钟。
-- Whisper 模型首次使用时会下载到 Hugging Face 本机缓存。
-- `small` 模型适合大多数普通电脑；内存不足时选择 `base` 或 `tiny`。
-- 默认使用 CPU，不需要 CUDA；15分钟视频可能需要数分钟。只有完整安装 NVIDIA CUDA 环境时才建议选择“自动检测 GPU”。
-- 内容历史保存在项目的 `data/history.json`；切换总结与问答、刷新页面或重新启动程序后都可以再次打开。
+Cookies are used only by yt-dlp when making requests to Bilibili. They are not sent
+to the selected AI provider and are not saved by this application. Never share a
+cookie file.
 
-## 常见问题
+## Whisper
+
+Whisper converts speech into text. Larger models are generally more accurate but
+slower and require more memory. `small` on CPU is a practical default for ordinary
+computers. When GPU mode is selected but the required CUDA runtime is incomplete,
+the app falls back to CPU instead of failing permanently.
+
+The first use of a Whisper model downloads it to the machine's Hugging Face cache.
+
+## Background tasks and shutdown behavior
+
+Each task records its provider, model, progress, elapsed time, and terminal status.
+A task keeps the model with which it started; changing that conversation's model
+requires terminating its active task first. Different conversations may use different
+models, although concurrent local models can compete for RAM, VRAM, and compute.
+
+The page maintains a small localhost-only WebSocket for each open application tab.
+When the last socket closes and no tab reconnects during the grace period, the
+Streamlit process exits along with its daemon background workers. This mechanism does
+not send content over the network. `stop.bat` remains the immediate manual fallback.
+
+Ollama is a separate application and is not terminated by `stop.bat`. To unload a
+model from Ollama memory, inspect and stop it separately:
+
+```powershell
+ollama ps
+ollama stop MODEL_NAME
+```
+
+## History, archive, and trash
+
+Summaries and Q&A are stored locally under `data`. Archiving hides an item without
+deleting it. Deleting a conversation moves its history and, when no active history
+still shares them, related local media files into `data/.trash`.
+
+Deleted items can be restored for 15 days. Each item has its own countdown and may
+also be permanently deleted after explicit confirmation. Expired backups are cleaned
+up on a later application launch or refresh.
+
+## Privacy and local data
+
+- `data`, `.venv`, API keys, cookies, downloaded media, model files, and personal
+  history are excluded from Git.
+- Cloud providers receive the subtitle text, questions, and prompts used for their
+  requests. Visual fallback also sends sampled frames to the selected cloud model.
+- Saving an API key writes it to the Git-ignored `data/settings.json` file on that
+  computer. Do not enable this on an untrusted shared machine.
+- A ChatGPT, Gemini, Claude, or other consumer subscription usually does not include
+  the separate API account, quota, or billing required by the corresponding API.
+- Only process content you are authorized to access and use.
+
+## Troubleshooting
 
 ### `cublas64_12.dll is not found`
 
-程序会自动改用 CPU。如果页面仍显示旧错误，停止程序后重新运行 `run.bat`。
+Use CPU mode or restart the application. The app automatically retries Whisper on
+CPU after common CUDA runtime failures.
 
-### 修改或更新后页面仍显示旧错误
+### The summary stops halfway
 
-Streamlit 运行进程可能仍缓存旧模块。先在启动窗口按 `Ctrl+C` 停止服务，再重新运行 `run.bat`。
+The app continues automatically only when the provider explicitly reports an output
+length limit. It stops continuation when the model repeats existing content or adds
+nothing new, preventing an infinite request loop. Each cloud continuation is another
+billable API request.
 
-### 视频问答提示上下文长度不足
+### The model list or context limit is missing
 
-先查看侧栏的“上下文预算”提示。如果程序检测到模型上限，会显示上限并提供建议值；如果服务没有公开上限，请按该模型或服务文档填写。完整字幕能放进上下文时，可以点击“使用建议值”或手动提高，以减少检索筛选造成的信息遗漏。
-
-如果完整字幕超过模型上限，程序会明确提示并检索相关字幕。此时整部视频类问题可能遗漏内容，可改用上下文更长的模型、缩小提问范围，或减少连续追问的轮数。对于 LM Studio、LocalAI、llama.cpp 和 vLLM，“上下文预算”还必须与服务端实际加载模型时的上下文设置一致；网页中的数值不能替服务端扩大上下文。
-
-### 为什么没有显示模型列表或上下文上限
-
-不是所有 OpenAI 兼容服务都会在 `/models` 返回上下文信息。程序检测不到时会允许手动填写模型 ID 和预算，并提示先查服务文档。若模型列表完全为空，请确认服务已经启动、地址带有正确的 `/v1` 路径、网络可达，并根据服务要求填写 API Key。
-
-### 总结生成到一半就停止
-
-新版会根据当前上下文动态设置输出长度；OpenAI 兼容接口、Gemini、Anthropic 和 Ollama 明确返回“达到长度上限”时，程序会持续从中断处继续并合并结果，直到模型正常结束。程序只会在模型开始重复或没有新增内容时停止，以避免无限循环。使用云端模型时，每次续写都是新的 API 请求，会增加用量和费用。AI任务进入独立后台线程后，普通页面重运行不会终止它；关闭整个程序进程仍会终止尚未完成的任务。
-
-### 总结或问答切换后如何找回内容
-
-同一视频的当前总结和问答会分别保留，来回切换不会清空。每次成功生成的总结和每次问答还会作为独立记录写入侧栏“内容历史”。选择记录后可重新打开；归档会从默认列表隐藏但不会删除，打开“显示已归档”可以取消归档。
-
-删除记录时，程序会把该聊天/总结以及对应视频目录中的字幕、音频等本地文件移入 `data/.trash`。侧栏“已删除”会显示每条记录剩余的恢复时间，15天内点击条目即可恢复记录和本地文件；到期后会在应用下次启动或刷新时自动永久清理。同一视频仍有其他正常历史记录时，共享的字幕和音频会继续留在正常目录，直到最后一条关联记录也被删除。
-
-点击“已删除”中的单条记录，可以选择恢复，也可以勾选二次确认后立即永久删除该聊天及其回收站文件；永久删除无法撤销。
+Not every compatible service exposes model metadata through `/models`. Enter the
+exact server model ID and documented context size manually, then use the connection
+test. The application-side context value cannot enlarge a model loaded with a smaller
+server-side context.
 
 ### `Could not copy Chrome cookie database`
 
-Windows 正在锁定浏览器 Cookie 数据库。完全退出所选浏览器，或导出 Netscape 格式的 `cookies.txt` 后指定其本机路径。不要把 Cookie 文件分享给别人。
+The browser is locking its cookie database. Fully exit that browser, or export a
+local Netscape-format `cookies.txt` and select it in Settings.
 
-### 下载中途断开
+### A download was interrupted
 
-程序会自动使用小分块续传并增加重试次数；高码率音频持续失败时会回退到较低码率。
-
-### 端口 8501 已被占用
-
-先关闭旧的程序窗口，或在任务管理器结束旧的 Streamlit/Python 进程，再运行 `run.bat`。
-
-### 更新 yt-dlp
+The downloader uses retries, small fragments, and a lower-bitrate audio fallback.
+If Bilibili changes its delivery interface, update yt-dlp:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -U yt-dlp
 ```
 
-### 运行兼容性测试
+### Port 8501 is already in use
 
-Windows：
+Run `stop.bat` first. The Windows launcher also detects an existing instance of this
+project and reopens it instead of intentionally creating a duplicate.
+
+## Tests
+
+Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-macOS / Linux：
+macOS and Linux:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
-
-## 数据与合规
-
-- 本地缓存位于 `data`，该目录不会提交到 Git。
-- Cookie 只由 yt-dlp 用于向 B站发起请求，不会发送给 AI 服务，也不会由本程序保存。
-- 请只处理你有权访问和使用的内容，不要绕过会员、付费或其他访问限制。
